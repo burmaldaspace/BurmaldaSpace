@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const sqlite3 = require('sqlite3');
 const cors = require('cors');
-const { Resend } = require('resend');
+const Unisender = require('unisender');
 
 const app = express();
 app.use(cors());
@@ -38,35 +38,31 @@ db.serialize(() => {
 });
 
 // ============================================
-// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (RESEND API)
+// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (UNISENDER API)
 // ============================================
-const resend = new Resend(process.env.RESEND_API_KEY);
+const UNISENDER_API_KEY = process.env.UNISENDER_API_KEY || '691u9sjq9fob18xpth1ug3tt5xwj4o4m4y3smp9a';
+const unisender = new Unisender(UNISENDER_API_KEY);
 
 async function sendCode(email, code) {
     console.log(`📤 Пытаюсь отправить письмо на ${email} с кодом ${code}`);
     
     try {
-        const { data, error } = await resend.emails.send({
-            from: 'Resend <onboarding@resend.dev>',
+        const result = await unisender.sendEmail({
             to: email,
+            from: 'burmaldaspace@gmail.com', // 👈 ЗДЕСЬ ТВОЯ ПОЧТА
             subject: 'Код подтверждения для BurmaldaSpace',
-            html: `
+            body: `
                 <h1>Код подтверждения</h1>
                 <p>Ваш код: <strong>${code}</strong></p>
                 <p>Код действует 10 минут.</p>
             `
         });
-
-        if (error) {
-            console.log('❌ Ошибка Resend:', error);
-            return false;
-        } else {
-            console.log('✅ Письмо отправлено через Resend!');
-            console.log('📋 Ответ:', data);
-            return true;
-        }
+        
+        console.log('✅ Письмо отправлено через UniSender!');
+        console.log('📋 Ответ:', result);
+        return true;
     } catch (error) {
-        console.log('❌ Ошибка:', error);
+        console.log('❌ Ошибка UniSender:', error);
         return false;
     }
 }
