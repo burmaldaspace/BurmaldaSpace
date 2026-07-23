@@ -47,15 +47,20 @@ async function sendCode(email, code) {
     console.log(`📤 Пытаюсь отправить письмо на ${email} с кодом ${code}`);
     
     try {
+        // ✅ ВЫЗЫВАЕМ sendEmail ПРАВИЛЬНО (без list_id для транзакционных писем)
         const result = await unisender.sendEmail({
-            to: email,
-            from: 'burmaldaspace@gmail.com', // 👈 ЗДЕСЬ ТВОЯ ПОЧТА
+            email: email,                     // 👈 Получатель
+            sender_name: 'BurmaldaSpace',     // 👈 Имя отправителя
+            sender_email: 'burmaldaspace@gmail.com', // 👈 Твоя подтверждённая почта
             subject: 'Код подтверждения для BurmaldaSpace',
             body: `
                 <h1>Код подтверждения</h1>
                 <p>Ваш код: <strong>${code}</strong></p>
                 <p>Код действует 10 минут.</p>
-            `
+            `,
+            track_read: 1,    // Отслеживать прочтение
+            track_links: 1,   // Отслеживать переходы по ссылкам
+            error_checking: 1 // Проверять ошибки
         });
         
         console.log('✅ Письмо отправлено через UniSender!');
