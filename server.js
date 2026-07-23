@@ -1,130 +1,222 @@
-const registerBtn = document.getElementById('register-btn');
-const registerSection = document.getElementById('register-section');
-const verifySection = document.getElementById('verify-section');
-const regError = document.getElementById('reg-error');
+require('dotenv').config();
 
-let currentEmail = '';
+const express = require('express');
+const sqlite3 = require('sqlite3');
+const cors = require('cors');
+const { Resend } = require('resend');
 
-registerBtn.addEventListener('click', async () => {
-    const name = document.getElementById('reg-name').value;
-    const email = document.getElementById('reg-email').value;
-    const password = document.getElementById('reg-password').value;
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-    regError.textContent = '';
+// ============================================
+// 📦 ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
+// ============================================
+const db = new sqlite3.Database('./burmalda.db');
 
-    if (!name || !email || !password) {
-        regError.textContent = 'Заполните все поля!';
-        return;
-    }
+db.serialize(() => {
+    db.run(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            verificationCode TEXT,
+            isVerified INTEGER DEFAULT 0
+        )
+    `);
 
-    if (password.length < 8) {
-        regError.textContent = 'Пароль должен быть не менее 8 символов!';
-        return;
-    }
-
-    try {
-        const response = await fetch('https://burmaldaspaceaa.onrender.com/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, Email: email, Password: password })
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            currentEmail = email;
-            registerSection.style.display = 'none';
-            verifySection.style.display = 'block';
-            document.getElementById('user-email-display').textContent = email;
-            localStorage.setItem('userEmail', email);
-            alert('✅ Код подтверждения отправлен на вашу почту! Проверьте почту (и папку Спам).');
-        } else {
-            regError.textContent = data.message || 'Ошибка регистрации';
-        }
-    } catch (error) {
-        regError.textContent = 'Ошибка соединения с сервером.';
-        console.error('Ошибка:', error);
-    }
+    db.run(`
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            price INTEGER NOT NULL,
+            rarity TEXT NOT NULL,
+            image TEXT
+        )
+    `);
 });
 
 // ============================================
-// ✅ АВТО-ПЕРЕКЛЮЧЕНИЕ И ПРОВЕРКА КОДА
+// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (RESEND API)
 // ============================================
-document.addEventListener('DOMContentLoaded', function() {
-    const codeInputs = document.querySelectorAll('.code-box');
-    if (codeInputs.length === 0) return;
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-    codeInputs.forEach((input, index) => {
-        input.addEventListener('input', function() {
-            this.value = this.value.replace(/\D/g, '');
-            if (this.value.length === 1 && index < codeInputs.length - 1) {
-                codeInputs[index + 1].focus();
-                codeInputs[index + 1].select();
-            }
+async function sendCode(email, code) {
+    console.log(`📤 Пытаюсь отправить письмо на ${email} с кодом ${code}`);
+    
+    try {
+        const { data, error } = await resend.emails.send({
+            from: 'Resend <onboarding@resend.dev>',
+            to: email,
+            subject: 'Код подтверждения для BurmaldaSpace',
+            html: `
+                <h1>Код подтверждения</h1>
+                <p>Ваш код: <strong>${code}</strong></p>
+                <p>Код действует 10 минут.</p>
+            `
         });
 
-        input.addEventListener('keydown', function(e) {
-            if (e.key === 'Backspace' && this.value === '' && index > 0) {
-                codeInputs[index - 1].focus();
-                codeInputs[index - 1].select();
-            }
-        });
-    });
+        if (error) {
+            console.log('❌ Ошибка Resend:', error);
+            return false;
+        } else {
+            console.log('✅ Письмо отправлено через Resend!');
+            console.log('📋 Ответ:', data);
+            return true;
+        }
+    } catch (error) {
+        console.log('❌ Ошибка:', error);
+        return false;
+    }
+}
 
-    const verifyBtn = document.getElementById('verify-btn');
-    const errorMessage = document.getElementById('error-message');
-    const userEmailDisplay = document.getElementById('user-email-display');
+// ============================================
+// 📝 РЕГИСТРАЦИЯ
+// ============================================
+app.post('/register', async (req, res) => {
+    console.log('📝 Получен запрос на регистрацию');
+    console.log('📦 Данные:', req.body);
+    
+    const email = req.body.Email;
+    const password = req.body.Password;
+    const name = req.body.name;
 
-    const savedEmail = localStorage.getItem('userEmail');
-    if (userEmailDisplay && savedEmail) {
-        userEmailDisplay.textContent = savedEmail;
+    if (!email || !password || !name) {
+        return res.status(400).json({ message: 'Заполните все поля!' });
     }
 
-    if (verifyBtn) {
-        verifyBtn.addEventListener('click', async function() {
-            let code = '';
-            codeInputs.forEach(input => code += input.value);
+    db.get('SELECT * FROM users WHERE email = ?', [email], async function(err, user) {
+        if (err) {
+            console.error('❌ Ошибка БД:', err);
+            return res.status(500).json({ message: 'Ошибка базы данных' });
+        }
+        
+        if (user) {
+            return res.status(400).json({ 
+                message: '❌ Пользователь с таким email уже существует!' 
+            });
+        }
 
-            const email = localStorage.getItem('userEmail');
-            if (!email) {
-                alert('❌ Email не найден. Попробуйте зарегистрироваться снова.');
-                return;
-            }
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-            if (code.length !== 6) {
-                errorMessage.textContent = '❌ Введите все 6 цифр!';
-                errorMessage.style.display = 'block';
-                return;
-            }
-
-            try {
-                const response = await fetch('https://burmaldaspaceaa.onrender.com/verify', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, code })
-                });
-                const data = await response.json();
-
-                if (data.success) {
-                    alert('✅ Аккаунт подтверждён!');
-                    window.location.href = './index.html';
-                } else {
-                    errorMessage.textContent = '❌ ' + data.message;
-                    errorMessage.style.display = 'block';
+        db.run(
+            'INSERT INTO users (name, email, password, verificationCode) VALUES (?, ?, ?, ?)',
+            [name, email, password, code],
+            async function(err) {
+                if (err) {
+                    console.error('❌ Ошибка вставки:', err);
+                    return res.status(500).json({ message: 'Ошибка сохранения' });
                 }
-            } catch (error) {
-                alert('❌ Ошибка: ' + error.message);
-            }
-        });
-    }
 
-    // Автоматическая проверка при заполнении всех полей
-    codeInputs.forEach(input => {
-        input.addEventListener('input', function() {
-            const allFilled = Array.from(codeInputs).every(inp => inp.value.length === 1);
-            if (allFilled && verifyBtn) {
-                setTimeout(() => verifyBtn.click(), 300);
+                console.log(`✅ Пользователь ${name} сохранён (ID: ${this.lastID})`);
+                console.log(`🔑 Сгенерирован код: ${code}`);
+
+                await sendCode(email, code);
+
+                res.json({
+                    message: 'Код подтверждения отправлен на почту!',
+                    redirect: './index.html'
+                });
             }
+        );
+    });
+});
+
+// ============================================
+// 🔑 ВХОД
+// ============================================
+app.post('/login', (req, res) => {
+    const email = req.body.Email;
+    const password = req.body.Password;
+
+    db.get('SELECT * FROM users WHERE email = ?', [email], function(err, user) {
+        if (err) {
+            console.error('❌ Ошибка БД:', err);
+            return res.status(500).json({ message: 'Ошибка базы данных' });
+        }
+
+        if (!user) {
+            return res.status(404).json({ 
+                message: '❌ Такого email нет в базе! Зарегистрируйтесь!' 
+            });
+        }
+
+        if (user.password !== password) {
+            return res.status(401).json({ 
+                message: '❌ Неверный пароль! Попробуйте снова.' 
+            });
+        }
+
+        console.log(`✅ Пользователь ${user.name} вошел в систему`);
+        res.json({
+            success: true,
+            name: user.name,
+            email: user.email,
+            redirect: './index.html'
         });
     });
+});
+
+// ============================================
+// ✅ ПРОВЕРКА КОДА
+// ============================================
+app.post('/verify', (req, res) => {
+    const { email, code } = req.body;
+
+    db.get('SELECT * FROM users WHERE email = ?', [email], function(err, user) {
+        if (err) return res.status(500).json({ success: false, message: 'Ошибка БД' });
+        if (!user) return res.status(404).json({ success: false, message: 'Пользователь не найден' });
+
+        if (user.verificationCode !== code) {
+            return res.json({ success: false, message: '❌ Неверный код!' });
+        }
+
+        db.run('UPDATE users SET isVerified = 1, verificationCode = NULL WHERE email = ?', [email], function(err) {
+            if (err) return res.status(500).json({ success: false, message: 'Ошибка обновления' });
+            res.json({ 
+                success: true, 
+                message: '✅ Аккаунт подтверждён!',
+                redirect: './index.html'
+            });
+        });
+    });
+});
+
+// ============================================
+// 🔄 ПОВТОРНАЯ ОТПРАВКА КОДА
+// ============================================
+app.post('/resend-code', async (req, res) => {
+    const { email } = req.body;
+
+    db.get('SELECT * FROM users WHERE email = ?', [email], async function(err, user) {
+        if (err) return res.status(500).json({ message: 'Ошибка БД' });
+        if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+
+        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+        db.run('UPDATE users SET verificationCode = ? WHERE email = ?', [newCode, email], async function(err) {
+            if (err) return res.status(500).json({ message: 'Ошибка обновления' });
+
+            await sendCode(email, newCode);
+            res.json({ message: '✅ Новый код отправлен на почту!' });
+        });
+    });
+});
+
+// ============================================
+// 📦 ПОЛУЧИТЬ ТОВАРЫ
+// ============================================
+app.get('/products', (req, res) => {
+    db.all('SELECT * FROM products', [], function(err, products) {
+        if (err) return res.status(500).json({ message: 'Ошибка БД' });
+        res.json(products);
+    });
+});
+
+// ============================================
+// 🚀 ЗАПУСК СЕРВЕРА
+// ============================================
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+    console.log(`✅ Сервер запущен на порту ${PORT}`);
 });
