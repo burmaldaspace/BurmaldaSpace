@@ -1,0 +1,33 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "BurmaldaSpace for Murder Mystery 2",
+  "keywords": [
+    "BurmaldaSpace",
+    "MM2",
+    "Купить оружия для мм2",
+    "оружия для мм2",
+    "дешевые оружия мм2",
+    "купить без скама оружия для мм2"
+  ],
+  "license": "ISC",
+  "author": "Dervix",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@paper-design/shaders-react": "^0.0.77",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.6",
+    "dns": "^0.2.2",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "install": "^0.13.0",
+    "nodemailer": "^9.0.3",
+    "resend": "^6.18.0",
+    "sqlite3": "^5.1.6"
+  }
+}
