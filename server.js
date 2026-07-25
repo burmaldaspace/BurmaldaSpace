@@ -1,4 +1,3 @@
-
 const express = require('express');
 const sqlite3 = require('sqlite3');
 const cors = require('cors');
@@ -45,7 +44,7 @@ const transporter = nodemailer.createTransport({
     secure: true,
     auth: {
         user: 'burmaldaspace-sms@mail.ru',
-        pass: 'um60DukCi0PEuqv4T7Ca'  // 👈 ПАРОЛЬ ПРИЛОЖЕНИЯ
+        pass: 'um60DukCi0PEuqv4T7Ca'
     }
 });
 
@@ -114,10 +113,10 @@ app.post('/register', async (req, res) => {
                 console.log(`✅ Пользователь ${name} сохранён (ID: ${this.lastID})`);
                 console.log(`🔑 Сгенерирован код: ${code}`);
 
-                await sendCode(email, code);
+                const sent = await sendCode(email, code);
 
                 res.json({
-                    message: 'Код подтверждения отправлен на почту!',
+                    message: sent ? 'Код подтверждения отправлен на почту!' : 'Ошибка отправки письма!',
                     redirect: './index.html'
                 });
             }
@@ -126,7 +125,7 @@ app.post('/register', async (req, res) => {
 });
 
 // ============================================
-// 🔑 ВХОД
+// 🔑 ВХОД (ЧЕРЕЗ FETCH)
 // ============================================
 app.post('/login', (req, res) => {
     const email = req.body.Email;
@@ -140,12 +139,14 @@ app.post('/login', (req, res) => {
 
         if (!user) {
             return res.status(404).json({ 
+                success: false,
                 message: '❌ Такого email нет в базе! Зарегистрируйтесь!' 
             });
         }
 
         if (user.password !== password) {
             return res.status(401).json({ 
+                success: false,
                 message: '❌ Неверный пароль! Попробуйте снова.' 
             });
         }
