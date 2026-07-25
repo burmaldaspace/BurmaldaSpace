@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const sqlite3 = require('sqlite3');
 const cors = require('cors');
@@ -44,7 +46,7 @@ const transporter = nodemailer.createTransport({
     secure: true,
     auth: {
         user: 'burmaldaspace-sms@mail.ru',
-        pass: 'um60DukCi0PEuqv4T7Ca'
+        pass: 'um60DukCi0PEuqv4T7Ca'  // 👈 ПАРОЛЬ ПРИЛОЖЕНИЯ
     }
 });
 
@@ -125,7 +127,7 @@ app.post('/register', async (req, res) => {
 });
 
 // ============================================
-// 🔑 ВХОД (ЧЕРЕЗ FETCH)
+// 🔑 ВХОД
 // ============================================
 app.post('/login', (req, res) => {
     const email = req.body.Email;
