@@ -45,8 +45,8 @@ const transporter = nodemailer.createTransport({
     port: 465,
     secure: true,
     auth: {
-        user: 'burmaldaspace-sms@mail.ru',
-        pass: 'um60DukCi0PEuqv4T7Ca'  // 👈 ПАРОЛЬ ПРИЛОЖЕНИЯ
+        user: process.env.MAIL_USER || 'burmaldaspace-sms@mail.ru',
+        pass: process.env.MAIL_PASS || 'um60DukCi0PEuqv4T7Ca'
     }
 });
 
@@ -55,7 +55,7 @@ async function sendCode(email, code) {
     
     try {
         const info = await transporter.sendMail({
-            from: 'burmaldaspace-sms@mail.ru',
+            from: process.env.MAIL_USER || 'burmaldaspace-sms@mail.ru',
             to: email,
             subject: 'Код подтверждения для BurmaldaSpace',
             html: `
