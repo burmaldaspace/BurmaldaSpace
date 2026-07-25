@@ -1,12 +1,41 @@
+require('dotenv').config();
+
 const express = require('express');
-const nodemailer = require('nodemailer');
+const sqlite3 = require('sqlite3');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// ============================================
+// 📦 ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
+// ============================================
+const db = new sqlite3.Database('./burmalda.db');
+
+db.serialize(() => {
+    db.run(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            verificationCode TEXT,
+            isVerified INTEGER DEFAULT 0
+        )
+    `);
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            price INTEGER NOT NULL,
+            rarity TEXT NOT NULL,
+            image TEXT
+        )
+    `);
+});
 
 // ============================================
 // 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (MAIL.RU)
@@ -17,63 +46,180 @@ const transporter = nodemailer.createTransport({
     secure: true,
     auth: {
         user: 'burmaldaspace-sms@mail.ru',
-        pass: 'um60DukCi0PEuqv4T7Ca'
+        pass: 'um60DukCi0PEuqv4T7Ca'  // 👈 ПАРОЛЬ ПРИЛОЖЕНИЯ
     }
 });
 
-// ============================================
-// 🏠 ПРОВЕРКА, ЧТО СЕРВЕР РАБОТАЕТ
-// ============================================
-app.get('/', (req, res) => {
-    res.json({ message: '✅ Сервер BurmaldaSpace работает!' });
-});
+async function sendCode(email, code) {
+    console.log(`📤 Пытаюсь отправить письмо на ${email} с кодом ${code}`);
+    
+    try {
+        const info = await transporter.sendMail({
+            from: 'burmaldaspace-sms@mail.ru',
+            to: email,
+            subject: 'Код подтверждения для BurmaldaSpace',
+            html: `
+                <h1>Код подтверждения</h1>
+                <p>Ваш код: <strong>${code}</strong></p>
+                <p>Код действует 10 минут.</p>
+            `
+        });
+        
+        console.log('✅ Письмо отправлено через Mail.ru!');
+        console.log('📋 Ответ:', info.response);
+        return true;
+    } catch (error) {
+        console.log('❌ Ошибка Mail.ru:', error);
+        return false;
+    }
+}
 
 // ============================================
 // 📝 РЕГИСТРАЦИЯ
 // ============================================
-app.post('/api/register', async (req, res) => {
-    try {
-        const { name, Email, Password } = req.body;
+app.post('/register', async (req, res) => {
+    console.log('📝 Получен запрос на регистрацию');
+    console.log('📦 Данные:', req.body);
+    
+    const email = req.body.Email;
+    const password = req.body.Password;
+    const name = req.body.name;
 
-        console.log('📦 Тело запроса:', req.body);
+    if (!email || !password || !name) {
+        return res.status(400).json({ message: 'Заполните все поля!' });
+    }
 
-        if (!name || !Email || !Password) {
-            return res.status(400).json({
-                status: 400,
-                message: 'Заполните все поля!'
+    db.get('SELECT * FROM users WHERE email = ?', [email], async function(err, user) {
+        if (err) {
+            console.error('❌ Ошибка БД:', err);
+            return res.status(500).json({ message: 'Ошибка базы данных' });
+        }
+        
+        if (user) {
+            return res.status(400).json({ 
+                message: '❌ Пользователь с таким email уже существует!' 
             });
         }
 
-        // ТУТ БУДЕТ ОТПРАВКА ПИСЬМА
-        await transporter.sendMail({
-            from: 'burmaldaspace-sms@mail.ru',
-            to: Email,
-            subject: 'Код подтверждения для BurmaldaSpace',
-            html: `
-                <h1>Код подтверждения</h1>
-                <p>Ваш код: <strong>123456</strong></p>
-                <p>Код действует 10 минут.</p>
-            `
-        });
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-        return res.status(200).json({
-            status: 200,
-            message: 'Код подтверждения отправлен на почту!'
-        });
+        db.run(
+            'INSERT INTO users (name, email, password, verificationCode) VALUES (?, ?, ?, ?)',
+            [name, email, password, code],
+            async function(err) {
+                if (err) {
+                    console.error('❌ Ошибка вставки:', err);
+                    return res.status(500).json({ message: 'Ошибка сохранения' });
+                }
 
-    } catch (error) {
-        console.error('❌ Ошибка:', error);
-        return res.status(500).json({
-            status: 500,
-            message: 'Ошибка сервера'
+                console.log(`✅ Пользователь ${name} сохранён (ID: ${this.lastID})`);
+                console.log(`🔑 Сгенерирован код: ${code}`);
+
+                await sendCode(email, code);
+
+                res.json({
+                    message: 'Код подтверждения отправлен на почту!',
+                    redirect: './index.html'
+                });
+            }
+        );
+    });
+});
+
+// ============================================
+// 🔑 ВХОД
+// ============================================
+app.post('/login', (req, res) => {
+    const email = req.body.Email;
+    const password = req.body.Password;
+
+    db.get('SELECT * FROM users WHERE email = ?', [email], function(err, user) {
+        if (err) {
+            console.error('❌ Ошибка БД:', err);
+            return res.status(500).json({ message: 'Ошибка базы данных' });
+        }
+
+        if (!user) {
+            return res.status(404).json({ 
+                message: '❌ Такого email нет в базе! Зарегистрируйтесь!' 
+            });
+        }
+
+        if (user.password !== password) {
+            return res.status(401).json({ 
+                message: '❌ Неверный пароль! Попробуйте снова.' 
+            });
+        }
+
+        console.log(`✅ Пользователь ${user.name} вошел в систему`);
+        res.json({
+            success: true,
+            name: user.name,
+            email: user.email,
+            redirect: './index.html'
         });
-    }
+    });
+});
+
+// ============================================
+// ✅ ПРОВЕРКА КОДА
+// ============================================
+app.post('/verify', (req, res) => {
+    const { email, code } = req.body;
+
+    db.get('SELECT * FROM users WHERE email = ?', [email], function(err, user) {
+        if (err) return res.status(500).json({ success: false, message: 'Ошибка БД' });
+        if (!user) return res.status(404).json({ success: false, message: 'Пользователь не найден' });
+
+        if (user.verificationCode !== code) {
+            return res.json({ success: false, message: '❌ Неверный код!' });
+        }
+
+        db.run('UPDATE users SET isVerified = 1, verificationCode = NULL WHERE email = ?', [email], function(err) {
+            if (err) return res.status(500).json({ success: false, message: 'Ошибка обновления' });
+            res.json({ 
+                success: true, 
+                message: '✅ Аккаунт подтверждён!',
+                redirect: './index.html'
+            });
+        });
+    });
+});
+
+// ============================================
+// 🔄 ПОВТОРНАЯ ОТПРАВКА КОДА
+// ============================================
+app.post('/resend-code', async (req, res) => {
+    const { email } = req.body;
+
+    db.get('SELECT * FROM users WHERE email = ?', [email], async function(err, user) {
+        if (err) return res.status(500).json({ message: 'Ошибка БД' });
+        if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+
+        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+        db.run('UPDATE users SET verificationCode = ? WHERE email = ?', [newCode, email], async function(err) {
+            if (err) return res.status(500).json({ message: 'Ошибка обновления' });
+
+            await sendCode(email, newCode);
+            res.json({ message: '✅ Новый код отправлен на почту!' });
+        });
+    });
+});
+
+// ============================================
+// 📦 ПОЛУЧИТЬ ТОВАРЫ
+// ============================================
+app.get('/products', (req, res) => {
+    db.all('SELECT * FROM products', [], function(err, products) {
+        if (err) return res.status(500).json({ message: 'Ошибка БД' });
+        res.json(products);
+    });
 });
 
 // ============================================
 // 🚀 ЗАПУСК СЕРВЕРА
 // ============================================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`✅ Сервер запущен на порту ${PORT}`);
 });
