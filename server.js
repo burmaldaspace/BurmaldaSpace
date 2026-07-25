@@ -1,223 +1,116 @@
-require('dotenv').config();
-
 const express = require('express');
-const sqlite3 = require('sqlite3');
-const cors = require('cors');
-const Unisender = require('unisender');
+const nodemailer = require('nodemailer');
 
 const app = express();
-app.use(cors());
+
+// ============================================
+// 📦 ПОДКЛЮЧЕНИЕ ОБРАБОТКИ ЗАПРОСОВ
+// ============================================
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(__dirname + '/frontend'));
 
 // ============================================
-// 📦 ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
+// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (MAIL.RU)
 // ============================================
-const db = new sqlite3.Database('./burmalda.db');
-
-db.serialize(() => {
-    db.run(`
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            verificationCode TEXT,
-            isVerified INTEGER DEFAULT 0
-        )
-    `);
-
-    db.run(`
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            price INTEGER NOT NULL,
-            rarity TEXT NOT NULL,
-            image TEXT
-        )
-    `);
+const transporter = nodemailer.createTransport({
+    host: 'smtp.mail.ru',
+    port: 465,
+    secure: true,
+    auth: {
+        user: 'burmaldaspace-sms@mail.ru',
+        pass: 'um60DukCi0PEuqv4T7Ca'
+    }
 });
 
 // ============================================
-// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (UNISENDER API)
+// 🏠 ГЛАВНАЯ СТРАНИЦА
 // ============================================
-const UNISENDER_API_KEY = process.env.UNISENDER_API_KEY || '691u9sjq9fob18xpth1ug3tt5xwj4o4m4y3smp9a';
-const unisender = new Unisender(UNISENDER_API_KEY);
-
-async function sendCode(email, code) {
-    console.log(`📤 Пытаюсь отправить письмо на ${email} с кодом ${code}`);
-    
-    try {
-        // ✅ ВЫЗЫВАЕМ sendEmail ПРАВИЛЬНО (без list_id для транзакционных писем)
-        const result = await unisender.sendEmail({
-            email: email,                     // 👈 Получатель
-            sender_name: 'BurmaldaSpace',     // 👈 Имя отправителя
-            sender_email: 'burmaldaspace@gmail.com', // 👈 Твоя подтверждённая почта
-            subject: 'Код подтверждения для BurmaldaSpace',
-            body: `
-                <h1>Код подтверждения</h1>
-                <p>Ваш код: <strong>${code}</strong></p>
-                <p>Код действует 10 минут.</p>
-            `,
-            track_read: 1,    // Отслеживать прочтение
-            track_links: 1,   // Отслеживать переходы по ссылкам
-            error_checking: 1 // Проверять ошибки
-        });
-        
-        console.log('✅ Письмо отправлено через UniSender!');
-        console.log('📋 Ответ:', result);
-        return true;
-    } catch (error) {
-        console.log('❌ Ошибка UniSender:', error);
-        return false;
-    }
-}
+app.get('/', (req, res) => {
+    res.sendFile('index.html', { root: __dirname + '/frontend' });
+});
 
 // ============================================
 // 📝 РЕГИСТРАЦИЯ
 // ============================================
-app.post('/register', async (req, res) => {
-    console.log('📝 Получен запрос на регистрацию');
-    console.log('📦 Данные:', req.body);
-    
-    const email = req.body.Email;
-    const password = req.body.Password;
-    const name = req.body.name;
+app.post('/api/register', async (req, res) => {
+    try {
+        const name = req.body.name;
+        const email = req.body.Email;
+        const password = req.body.Password;
 
-    if (!email || !password || !name) {
-        return res.status(400).json({ message: 'Заполните все поля!' });
-    }
+        console.log('📦 Тело запроса:', req.body);
 
-    db.get('SELECT * FROM users WHERE email = ?', [email], async function(err, user) {
-        if (err) {
-            console.error('❌ Ошибка БД:', err);
-            return res.status(500).json({ message: 'Ошибка базы данных' });
-        }
-        
-        if (user) {
-            return res.status(400).json({ 
-                message: '❌ Пользователь с таким email уже существует!' 
+        if (!name || !email || !password) {
+            return res.status(400).json({
+                status: 400,
+                message: 'Заполните все поля!'
             });
         }
 
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        // Здесь будет код для отправки письма
+        await transporter.sendMail({
+            from: 'burmaldaspace-sms@mail.ru',
+            to: email,
+            subject: 'Код подтверждения для BurmaldaSpace',
+            html: `
+                <h1>Код подтверждения</h1>
+                <p>Ваш код: <strong>123456</strong></p>
+                <p>Код действует 10 минут.</p>
+            `
+        });
 
-        db.run(
-            'INSERT INTO users (name, email, password, verificationCode) VALUES (?, ?, ?, ?)',
-            [name, email, password, code],
-            async function(err) {
-                if (err) {
-                    console.error('❌ Ошибка вставки:', err);
-                    return res.status(500).json({ message: 'Ошибка сохранения' });
-                }
+        return res.status(200).json({
+            status: 200,
+            message: 'Код подтверждения отправлен на почту!'
+        });
 
-                console.log(`✅ Пользователь ${name} сохранён (ID: ${this.lastID})`);
-                console.log(`🔑 Сгенерирован код: ${code}`);
-
-                await sendCode(email, code);
-
-                res.json({
-                    message: 'Код подтверждения отправлен на почту!',
-                    redirect: './index.html'
-                });
-            }
-        );
-    });
+    } catch (error) {
+        console.error('❌ Ошибка:', error);
+        return res.status(500).json({
+            status: 500,
+            message: 'Ошибка сервера'
+        });
+    }
 });
 
 // ============================================
 // 🔑 ВХОД
 // ============================================
-app.post('/login', (req, res) => {
-    const email = req.body.Email;
-    const password = req.body.Password;
+app.post('/api/login', async (req, res) => {
+    try {
+        const email = req.body.Email;
+        const password = req.body.Password;
 
-    db.get('SELECT * FROM users WHERE email = ?', [email], function(err, user) {
-        if (err) {
-            console.error('❌ Ошибка БД:', err);
-            return res.status(500).json({ message: 'Ошибка базы данных' });
-        }
+        console.log('📦 Вход:', req.body);
 
-        if (!user) {
-            return res.status(404).json({ 
-                message: '❌ Такого email нет в базе! Зарегистрируйтесь!' 
+        if (!email || !password) {
+            return res.status(400).json({
+                status: 400,
+                message: 'Заполните все поля!'
             });
         }
 
-        if (user.password !== password) {
-            return res.status(401).json({ 
-                message: '❌ Неверный пароль! Попробуйте снова.' 
-            });
-        }
+        // Здесь будет проверка пользователя в БД
 
-        console.log(`✅ Пользователь ${user.name} вошел в систему`);
-        res.json({
-            success: true,
-            name: user.name,
-            email: user.email,
-            redirect: './index.html'
+        return res.status(200).json({
+            status: 200,
+            message: 'Вход выполнен успешно!'
         });
-    });
-});
 
-// ============================================
-// ✅ ПРОВЕРКА КОДА
-// ============================================
-app.post('/verify', (req, res) => {
-    const { email, code } = req.body;
-
-    db.get('SELECT * FROM users WHERE email = ?', [email], function(err, user) {
-        if (err) return res.status(500).json({ success: false, message: 'Ошибка БД' });
-        if (!user) return res.status(404).json({ success: false, message: 'Пользователь не найден' });
-
-        if (user.verificationCode !== code) {
-            return res.json({ success: false, message: '❌ Неверный код!' });
-        }
-
-        db.run('UPDATE users SET isVerified = 1, verificationCode = NULL WHERE email = ?', [email], function(err) {
-            if (err) return res.status(500).json({ success: false, message: 'Ошибка обновления' });
-            res.json({ 
-                success: true, 
-                message: '✅ Аккаунт подтверждён!',
-                redirect: './index.html'
-            });
+    } catch (error) {
+        console.error('❌ Ошибка:', error);
+        return res.status(500).json({
+            status: 500,
+            message: 'Ошибка сервера'
         });
-    });
-});
-
-// ============================================
-// 🔄 ПОВТОРНАЯ ОТПРАВКА КОДА
-// ============================================
-app.post('/resend-code', async (req, res) => {
-    const { email } = req.body;
-
-    db.get('SELECT * FROM users WHERE email = ?', [email], async function(err, user) {
-        if (err) return res.status(500).json({ message: 'Ошибка БД' });
-        if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
-
-        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-        db.run('UPDATE users SET verificationCode = ? WHERE email = ?', [newCode, email], async function(err) {
-            if (err) return res.status(500).json({ message: 'Ошибка обновления' });
-
-            await sendCode(email, newCode);
-            res.json({ message: '✅ Новый код отправлен на почту!' });
-        });
-    });
-});
-
-// ============================================
-// 📦 ПОЛУЧИТЬ ТОВАРЫ
-// ============================================
-app.get('/products', (req, res) => {
-    db.all('SELECT * FROM products', [], function(err, products) {
-        if (err) return res.status(500).json({ message: 'Ошибка БД' });
-        res.json(products);
-    });
+    }
 });
 
 // ============================================
 // 🚀 ЗАПУСК СЕРВЕРА
 // ============================================
-const PORT = process.env.PORT || 10000;
+const PORT = 3000;
 app.listen(PORT, () => {
     console.log(`✅ Сервер запущен на порту ${PORT}`);
 });
