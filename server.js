@@ -9,7 +9,6 @@ require('dotenv').config();
 const express = require('express');
 const sqlite3 = require('sqlite3');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors());
@@ -44,38 +43,50 @@ db.serialize(() => {
 });
 
 // ============================================
-// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (MAIL.RU)
+// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (UNISENDER API — работает через HTTPS,
+// поэтому Render не блокирует, в отличие от SMTP)
 // ============================================
-const transporter = nodemailer.createTransport({
-    host: 'smtp.mail.ru',
-    port: 465,
-    secure: true,
-    auth: {
-        user: process.env.MAIL_USER || 'burmaldaspace-sms@mail.ru',
-        pass: process.env.MAIL_PASS || 'um60DukCi0PEuqv4T7Ca'
-    }
-});
+const UNISENDER_API_KEY = process.env.UNISENDER_API_KEY;
+const SENDER_EMAIL = process.env.SENDER_EMAIL || 'burmaldaspace-sms@mail.ru'; // должен быть подтверждён в Unisender
+const SENDER_NAME = 'BurmaldaSpace';
+
+if (!UNISENDER_API_KEY) {
+    console.warn('⚠️ UNISENDER_API_KEY не задан в переменных окружения! Отправка писем работать не будет.');
+}
 
 async function sendCode(email, code) {
     console.log(`📤 Пытаюсь отправить письмо на ${email} с кодом ${code}`);
-    
+
     try {
-        const info = await transporter.sendMail({
-            from: process.env.MAIL_USER || 'burmaldaspace-sms@mail.ru',
-            to: email,
+        const params = new URLSearchParams({
+            format: 'json',
+            api_key: UNISENDER_API_KEY,
+            email: email,
+            sender_name: SENDER_NAME,
+            sender_email: SENDER_EMAIL,
             subject: 'Код подтверждения для BurmaldaSpace',
-            html: `
+            body: `
                 <h1>Код подтверждения</h1>
                 <p>Ваш код: <strong>${code}</strong></p>
                 <p>Код действует 10 минут.</p>
             `
         });
-        
-        console.log('✅ Письмо отправлено через Mail.ru!');
-        console.log('📋 Ответ:', info.response);
+
+        const response = await fetch(`https://api.unisender.com/ru/api/sendEmail?${params.toString()}`, {
+            method: 'GET'
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            console.log('❌ Ошибка Unisender:', data.error);
+            return false;
+        }
+
+        console.log('✅ Письмо отправлено через Unisender!', data.result);
         return true;
     } catch (error) {
-        console.log('❌ Ошибка Mail.ru:', error);
+        console.log('❌ Ошибка Unisender:', error);
         return false;
     }
 }
@@ -86,7 +97,7 @@ async function sendCode(email, code) {
 app.post('/register', async (req, res) => {
     console.log('📝 Получен запрос на регистрацию');
     console.log('📦 Данные:', req.body);
-    
+
     const email = req.body.Email;
     const password = req.body.Password;
     const name = req.body.name;
@@ -100,10 +111,10 @@ app.post('/register', async (req, res) => {
             console.error('❌ Ошибка БД:', err);
             return res.status(500).json({ message: 'Ошибка базы данных' });
         }
-        
+
         if (user) {
-            return res.status(400).json({ 
-                message: '❌ Пользователь с таким email уже существует!' 
+            return res.status(400).json({
+                message: '❌ Пользователь с таким email уже существует!'
             });
         }
 
@@ -146,16 +157,16 @@ app.post('/login', (req, res) => {
         }
 
         if (!user) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
-                message: '❌ Такого email нет в базе! Зарегистрируйтесь!' 
+                message: '❌ Такого email нет в базе! Зарегистрируйтесь!'
             });
         }
 
         if (user.password !== password) {
-            return res.status(401).json({ 
+            return res.status(401).json({
                 success: false,
-                message: '❌ Неверный пароль! Попробуйте снова.' 
+                message: '❌ Неверный пароль! Попробуйте снова.'
             });
         }
 
@@ -185,8 +196,8 @@ app.post('/verify', (req, res) => {
 
         db.run('UPDATE users SET isVerified = 1, verificationCode = NULL WHERE email = ?', [email], function(err) {
             if (err) return res.status(500).json({ success: false, message: 'Ошибка обновления' });
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 message: '✅ Аккаунт подтверждён!',
                 redirect: './index.html'
             });
