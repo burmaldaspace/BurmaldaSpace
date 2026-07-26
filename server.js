@@ -42,35 +42,6 @@ db.serialize(() => {
 });
 
 // ============================================
-// 🛒 СПИСОК ТОВАРОВ
-// Чтобы добавить товар — просто добавь строку в этот массив и запушь на GitHub.
-// Render сам передеплоит сервер, и товар появится на сайте.
-// image — имя файла из папки /images (например: images/knife.png на фронтенде)
-// ============================================
-const PRODUCTS = [
-    { name: 'Мясник', price: 1500, rarity: 'Легендарный', image: 'myasnik.png' },
-    { name: 'Огненный клинок', price: 900, rarity: 'Редкий', image: 'fire-blade.png' },
-    { name: 'Звёздный нож', price: 700, rarity: 'Необычный', image: 'star-knife.png' },
-    // 👇 сюда добавляй новые товары по этому же образцу
-    // { name: 'Название', price: 1000, rarity: 'Редкость', image: 'файл.png' },
-];
-
-// Пересоздаём таблицу товаров при каждом запуске — берём список ровно из PRODUCTS выше
-db.serialize(() => {
-    db.run('DELETE FROM products', [], (err) => {
-        if (err) return console.error('❌ Ошибка очистки товаров:', err);
-
-        const stmt = db.prepare('INSERT INTO products (name, price, rarity, image) VALUES (?, ?, ?, ?)');
-        PRODUCTS.forEach(p => {
-            stmt.run(p.name, p.price, p.rarity, p.image);
-        });
-        stmt.finalize(() => {
-            console.log(`✅ Загружено товаров: ${PRODUCTS.length}`);
-        });
-    });
-});
-
-// ============================================
 // 📝 РЕГИСТРАЦИЯ (без подтверждения почты — аккаунт активен сразу)
 // ============================================
 app.post('/register', async (req, res) => {
@@ -158,7 +129,7 @@ app.post('/login', (req, res) => {
 });
 
 // ============================================
-// 📦 ПОЛУЧИТЬ ТОВАРЫ
+// 📦 ПОЛУЧИТЬ ТОВАРЫ (открыто для всех — каталог на главной)
 // ============================================
 app.get('/products', (req, res) => {
     db.all('SELECT * FROM products', [], function(err, products) {
@@ -168,9 +139,26 @@ app.get('/products', (req, res) => {
 });
 
 // ============================================
-// ➕ ДОБАВИТЬ ТОВАР (для admin.html)
+// 🔒 ЗАЩИТА АДМИНСКИХ ЭНДПОИНТОВ
 // ============================================
-app.post('/products/add', (req, res) => {
+const ADMIN_KEY = process.env.ADMIN_KEY;
+
+if (!ADMIN_KEY) {
+    console.warn('⚠️ ADMIN_KEY не задан! Админка будет недоступна, пока не зададите его в переменных окружения.');
+}
+
+function checkAdminKey(req, res, next) {
+    const key = req.headers['x-admin-key'];
+    if (!ADMIN_KEY || key !== ADMIN_KEY) {
+        return res.status(401).json({ success: false, message: '❌ Неверный пароль администратора' });
+    }
+    next();
+}
+
+// ============================================
+// ➕ ДОБАВИТЬ ТОВАР (только для админки, с ключом)
+// ============================================
+app.post('/products/add', checkAdminKey, (req, res) => {
     const { name, price, rarity, image } = req.body;
 
     if (!name || !price) {
@@ -192,51 +180,15 @@ app.post('/products/add', (req, res) => {
 });
 
 // ============================================
-// 🗑️ УДАЛИТЬ ТОВАР (для admin.html)
+// 🗑️ УДАЛИТЬ ТОВАР (только для админки, с ключом)
 // ============================================
-app.delete('/products/:id', (req, res) => {
-    const { id } = req.params;
-
-    db.run('DELETE FROM products WHERE id = ?', [id], function(err) {
+app.delete('/products/:id', checkAdminKey, (req, res) => {
+    db.run('DELETE FROM products WHERE id = ?', [req.params.id], function(err) {
         if (err) {
             console.error('❌ Ошибка удаления товара:', err);
             return res.status(500).json({ success: false, message: 'Ошибка базы данных' });
         }
-        console.log(`🗑️ Товар ID ${id} удалён`);
-        res.json({ success: true });
-    });
-});
-
-// ============================================
-// ➕ ДОБАВИТЬ ТОВАР (для себя, без формы — через запрос)
-// ============================================
-app.post('/products/add', (req, res) => {
-    const { name, price, rarity, image } = req.body;
-
-    if (!name || !price || !rarity) {
-        return res.status(400).json({ message: 'Заполните name, price, rarity!' });
-    }
-
-    db.run(
-        'INSERT INTO products (name, price, rarity, image) VALUES (?, ?, ?, ?)',
-        [name, price, rarity, image || ''],
-        function(err) {
-            if (err) {
-                console.error('❌ Ошибка добавления товара:', err);
-                return res.status(500).json({ message: 'Ошибка сохранения' });
-            }
-            console.log(`✅ Товар "${name}" добавлен (ID: ${this.lastID})`);
-            res.json({ success: true, id: this.lastID });
-        }
-    );
-});
-
-// ============================================
-// 🗑️ УДАЛИТЬ ТОВАР ПО ID
-// ============================================
-app.delete('/products/:id', (req, res) => {
-    db.run('DELETE FROM products WHERE id = ?', [req.params.id], function(err) {
-        if (err) return res.status(500).json({ message: 'Ошибка удаления' });
+        console.log(`🗑️ Товар ID ${req.params.id} удалён`);
         res.json({ success: true, deleted: this.changes });
     });
 });
