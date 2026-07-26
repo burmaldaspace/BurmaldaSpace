@@ -1,3 +1,6 @@
+// ============================================
+// 🌐 ФОРСИРУЕМ ИСПОЛЬЗОВАНИЕ IPv4
+// ============================================
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 
@@ -23,8 +26,7 @@ db.serialize(() => {
             name TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
-            verificationCode TEXT,
-            isVerified INTEGER DEFAULT 0
+            isVerified INTEGER DEFAULT 1
         )
     `);
 
@@ -40,56 +42,7 @@ db.serialize(() => {
 });
 
 // ============================================
-// 📧 НАСТРОЙКА ОТПРАВКИ ПИСЕМ (UNISENDER API — работает через HTTPS,
-// поэтому Render не блокирует, в отличие от SMTP)
-// ============================================
-const UNISENDER_API_KEY = process.env.UNISENDER_API_KEY;
-const SENDER_EMAIL = process.env.SENDER_EMAIL || 'burmaldaspace-sms@mail.ru'; // должен быть подтверждён в Unisender
-const SENDER_NAME = 'BurmaldaSpace';
-
-if (!UNISENDER_API_KEY) {
-    console.warn('⚠️ UNISENDER_API_KEY не задан в переменных окружения! Отправка писем работать не будет.');
-}
-
-async function sendCode(email, code) {
-    console.log(`📤 Пытаюсь отправить письмо на ${email} с кодом ${code}`);
-
-    try {
-        const params = new URLSearchParams({
-            format: 'json',
-            api_key: UNISENDER_API_KEY,
-            email: email,
-            sender_name: SENDER_NAME,
-            sender_email: SENDER_EMAIL,
-            subject: 'Код подтверждения для BurmaldaSpace',
-            body: `
-                <h1>Код подтверждения</h1>
-                <p>Ваш код: <strong>${code}</strong></p>
-                <p>Код действует 10 минут.</p>
-            `
-        });
-
-        const response = await fetch(`https://api.unisender.com/ru/api/sendEmail?${params.toString()}`, {
-            method: 'GET'
-        });
-
-        const data = await response.json();
-
-        if (data.error) {
-            console.log('❌ Ошибка Unisender:', data.error);
-            return false;
-        }
-
-        console.log('✅ Письмо отправлено через Unisender!', data.result);
-        return true;
-    } catch (error) {
-        console.log('❌ Ошибка Unisender:', error);
-        return false;
-    }
-}
-
-// ============================================
-// 📝 РЕГИСТРАЦИЯ
+// 📝 РЕГИСТРАЦИЯ (без подтверждения почты — аккаунт активен сразу)
 // ============================================
 app.post('/register', async (req, res) => {
     console.log('📝 Получен запрос на регистрацию');
@@ -115,24 +68,22 @@ app.post('/register', async (req, res) => {
             });
         }
 
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
-
         db.run(
-            'INSERT INTO users (name, email, password, verificationCode) VALUES (?, ?, ?, ?)',
-            [name, email, password, code],
-            async function(err) {
+            'INSERT INTO users (name, email, password, isVerified) VALUES (?, ?, ?, 1)',
+            [name, email, password],
+            function(err) {
                 if (err) {
                     console.error('❌ Ошибка вставки:', err);
                     return res.status(500).json({ message: 'Ошибка сохранения' });
                 }
 
                 console.log(`✅ Пользователь ${name} сохранён (ID: ${this.lastID})`);
-                console.log(`🔑 Сгенерирован код: ${code}`);
-
-                const sent = await sendCode(email, code);
 
                 res.json({
-                    message: sent ? 'Код подтверждения отправлен на почту!' : 'Ошибка отправки письма!',
+                    success: true,
+                    name: name,
+                    email: email,
+                    message: '✅ Регистрация прошла успешно!',
                     redirect: './index.html'
                 });
             }
@@ -173,51 +124,6 @@ app.post('/login', (req, res) => {
             name: user.name,
             email: user.email,
             redirect: './index.html'
-        });
-    });
-});
-
-// ============================================
-// ✅ ПРОВЕРКА КОДА
-// ============================================
-app.post('/verify', (req, res) => {
-    const { email, code } = req.body;
-
-    db.get('SELECT * FROM users WHERE email = ?', [email], function(err, user) {
-        if (err) return res.status(500).json({ success: false, message: 'Ошибка БД' });
-        if (!user) return res.status(404).json({ success: false, message: 'Пользователь не найден' });
-
-        if (user.verificationCode !== code) {
-            return res.json({ success: false, message: '❌ Неверный код!' });
-        }
-
-        db.run('UPDATE users SET isVerified = 1, verificationCode = NULL WHERE email = ?', [email], function(err) {
-            if (err) return res.status(500).json({ success: false, message: 'Ошибка обновления' });
-            res.json({
-                success: true,
-                message: '✅ Аккаунт подтверждён!',
-                redirect: './index.html'
-            });
-        });
-    });
-});
-
-// ============================================
-// 🔄 ПОВТОРНАЯ ОТПРАВКА КОДА
-// ============================================
-app.post('/resend-code', async (req, res) => {
-    const { email } = req.body;
-
-    db.get('SELECT * FROM users WHERE email = ?', [email], async function(err, user) {
-        if (err) return res.status(500).json({ message: 'Ошибка БД' });
-        if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
-
-        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-        db.run('UPDATE users SET verificationCode = ? WHERE email = ?', [newCode, email], async function(err) {
-            if (err) return res.status(500).json({ message: 'Ошибка обновления' });
-
-            await sendCode(email, newCode);
-            res.json({ message: '✅ Новый код отправлен на почту!' });
         });
     });
 });
